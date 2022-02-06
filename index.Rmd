@@ -1,0 +1,175 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Jingfang Cui"
+date: "06/02/2022"
+output: html_document
+---
+
+# Background 
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+# Data
+
+### Training data
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+### Test data
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+# Objective
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+# Set up the workspace
+```{r, results='hide',message=FALSE}
+library(readxl)
+library(plyr)
+library(data.table)
+library(caret)
+library(DataExplorer)
+library(dplyr)
+```
+
+# load the data from the URLs
+```{r}
+train_tbl <- as.data.table(read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")))
+test_tbl <- as.data.table(read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")))
+```
+
+Have a quick look at the training data
+```{r}
+glimpse(train_tbl)
+```
+
+# Data cleasing
+We noticed that there were many "#DIV/0!" errors and blank values in the training set. We replace them with NA.
+```{r, results='hide',message=FALSE}
+train_tbl <- train_tbl %>% na_if("#DIV/0!")
+train_tbl <- train_tbl %>% na_if("")
+```
+
+```{r, results='hide',message=FALSE, echo=FALSE}
+train_tbl <- setDT(train_tbl)
+
+var_category <- c("kurtosis_roll_belt"
+                  ,"kurtosis_picth_belt"
+                  ,"kurtosis_yaw_belt"
+                  ,"skewness_roll_belt"
+                  ,"skewness_roll_belt.1"
+                  ,"skewness_yaw_belt"
+                  ,"max_yaw_belt"
+                  ,"min_yaw_belt"
+                  ,"amplitude_yaw_forearm"
+                  ,"kurtosis_roll_arm"
+                  ,"kurtosis_picth_arm"
+                  ,"kurtosis_yaw_arm"
+                  ,"skewness_roll_arm"
+                  ,"skewness_pitch_arm"
+                  ,"skewness_yaw_arm"
+                  ,"kurtosis_roll_dumbbell"
+                  ,"kurtosis_picth_dumbbell"
+                  ,"kurtosis_yaw_dumbbell"
+                  ,"skewness_roll_dumbbell"
+                  ,"skewness_pitch_dumbbell"
+                  ,"skewness_yaw_dumbbell"
+                  ,"max_yaw_dumbbell"
+                  ,"min_yaw_dumbbell"
+                  ,"amplitude_yaw_dumbbell"
+                  ,"kurtosis_roll_forearm"
+                  ,"kurtosis_picth_forearm"
+                  ,"kurtosis_yaw_forearm"
+                  ,"skewness_roll_forearm"
+                  ,"skewness_pitch_forearm"
+                  ,"skewness_yaw_forearm"
+                  ,"max_yaw_forearm"
+                  ,"min_yaw_forearm"
+                  ,"amplitude_yaw_belt"
+)
+
+for (var in var_category){
+  var_class <- train_tbl %>% pull(var) %>% class()
+  if(!any(var_class %in% c("numeric"))){
+    print(var_class)
+    train_tbl[, c(var):=as.numeric(get(var))]
+  }
+}
+```
+
+
+# Exploratory Data Analysis
+```{r}
+plot_intro(train_tbl)
+```
+
+We noticed that:
+1. 0% complete rows: it means all of the rows with missing values.
+2. 61.3% missing observations.
+3. 3.8% of the columns are completely missing.
+
+
+Output the ratio of missing values for each column.
+```{r}
+missing_ratio <- profile_missing(train_tbl)
+head(missing_ratio)
+```
+
+We just keep the columns with missing values less than 50% for modelling.
+```{r}
+col_list <- missing_ratio %>% filter(pct_missing<0.5) %>% select(feature)
+col_list <-as.vector(unlist(col_list$feature))
+train_sb <- train_tbl[, ..col_list]
+```
+
+To visualize distribution for all continuous columns:
+```{r}
+plot_histogram(train_sb)
+```
+Remove the following columns since they are not being used in modelling.
+```{r}
+remove_col<- c("new_window"
+               ,"num_window"
+               ,"X"
+               ,"user_name"
+               ,"raw_timestamp_part_1"
+               ,"raw_timestamp_part_2"
+               ,"cvtd_timestamp"
+               ,"gyros_dumbbell_x"
+               ,"gyros_dumbbell_y"
+               ,"gyros_dumbbell_z"
+               ,"gyros_forearm_y"
+               ,"gyros_forearm_z")
+
+train_sb_te <- train_sb[, -..remove_col]
+```
+
+```{r, results='hide',message=FALSE, echo=FALSE}
+train_sb_te$classe <- factor(train_sb_te$classe)
+```
+
+# Partitioning the traing set
+```{r}
+inTrain = createDataPartition(y=train_sb_te$classe, p=0.7, list=FALSE)
+training <- train_sb_te[inTrain,]
+testing <- train_sb_te[-inTrain,]
+```
+
+#GBM 
+```{r}
+mod_gbm <- train(classe~., method="gbm",data=training,verbose=FALSE)
+mod_gbm
+```
+```{r}
+plot(mod_gbm)
+```
+# Out of sample error
+```{r}
+testing_pred <- predict(mod_gbm,testing[,-c("classe")])
+confusionMatrix(data=testing_pred,reference=testing$classe)
+```
+
+# 20 Test cases
+```{r}
+predict(mod_gbm,test_tbl)
+```
