@@ -126,6 +126,7 @@ To visualize distribution for all continuous columns:
 ```{r}
 plot_histogram(train_sb)
 ```
+
 Remove the following columns since they are not being used in modelling.
 ```{r}
 remove_col<- c("new_window"
@@ -155,14 +156,20 @@ training <- train_sb_te[inTrain,]
 testing <- train_sb_te[-inTrain,]
 ```
 
-#GBM 
-```{r}
+# GBM 
+We decided to choose GBM as our model due to its impressive predictive accuracy and lots of flexibility.
+
+```{r, results='hide',message=FALSE}
 mod_gbm <- train(classe~., method="gbm",data=training,verbose=FALSE)
-mod_gbm
 ```
+
 ```{r}
+mod_gbm
 plot(mod_gbm)
 ```
+
+According to the in-sample error of 4%, we expected that the out-of-sample is around the same, so the accuracy for the test set should be around 96%.
+
 # Out of sample error
 ```{r}
 testing_pred <- predict(mod_gbm,testing[,-c("classe")])
